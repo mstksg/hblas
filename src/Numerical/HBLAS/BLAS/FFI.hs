@@ -664,3 +664,31 @@ foreign  import ccall unsafe "cblas_zher2k"
 --                    Double *alpha,   Double *A,   CInt lda,   Double *B,   CInt ldb,   Double beta, Double *C,   CInt ldc);
 
 ----void cblas_xerbla(CInt p, char *rout, char *form, ...);
+
+--void cblas_sgemv(  enum CBLAS_ORDER order,    enum CBLAS_TRANSPOSE trans,    CInt m,   CInt n,
+--           Float alpha,   Float  *a,   CInt lda,    Float  *x,   CInt incx,    Float beta,  Float  *y,   CInt incy);
+--void cblas_dgemv(  enum CBLAS_ORDER order,    enum CBLAS_TRANSPOSE trans,    CInt m,   CInt n,
+--           Double alpha,   Double  *a,   CInt lda,    Double  *x,   CInt incx,    Double beta,  Double  *y,   CInt incy);
+--void cblas_cgemv(  enum CBLAS_ORDER order,    enum CBLAS_TRANSPOSE trans,    CInt m,   CInt n,
+--           Float *alpha,   Float  *a,   CInt lda,    Float  *x,   CInt incx,    Float *beta,  Float  *y,   CInt incy);
+--void cblas_zgemv(  enum CBLAS_ORDER order,    enum CBLAS_TRANSPOSE trans,    CInt m,   CInt n,
+--           Double *alpha,   Double  *a,   CInt lda,    Double  *x,   CInt incx,    Double *beta,  Double  *y,   CInt incy);
+
+
+
+-- |  Matrix mult for general dense matrices
+type GemvFunFFI scale el = CBLAS_ORDERT ->   CBLAS_TRANSPOSET -> 
+        CInt -> CInt -> {- alpha -} scale  -> {- Matrix A-} Ptr el  -> CInt -> {- x -}  Ptr el -> CInt-> 
+            {- beta -} scale -> {- y -}  Ptr el -> CInt -> IO ()
+
+foreign import ccall unsafe "cblas_sgemv" 
+    cblas_sgemv_unsafe :: GemvFunFFI Float Float
+
+foreign import ccall unsafe "cblas_dgemv" 
+    cblas_dgemv_unsafe :: GemvFunFFI Double Double
+
+foreign import ccall "cblas_sgemv" 
+    cblas_sgemv_safe :: GemvFunFFI Float Float
+
+foreign import ccall "cblas_dgemv" 
+    cblas_dgemv_safe :: GemvFunFFI Double Double

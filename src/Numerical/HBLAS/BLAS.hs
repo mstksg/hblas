@@ -20,6 +20,8 @@ import qualified Data.Vector.Storable.Mutable as SM
 flopsThreshold = 10000
 gemmComplexity a b c = a * b * c  -- this will be wrong by some constant factor, albeit a small one
 
+gemvComplexity = undefined
+
 
 -- this covers the ~6 cases for checking the dimensions for GEMM quite nicely
 isBadGemm tra trb  ax ay bx by cx cy = isBadGemmHelper (cds tra (ax,ay)) (cds trb (bx,by) )  (cx,cy)
@@ -27,6 +29,8 @@ isBadGemm tra trb  ax ay bx by cx cy = isBadGemmHelper (cds tra (ax,ay)) (cds tr
     cds = coordSwapper 
     isBadGemmHelper !(ax,ay) !(bx,by) !(cx,cy) =  (minimum [ax, ay, bx, by, cx ,cy] <= 0)  
         || not (  cy ==  ay && cx == bx && ax == by)
+
+isBadGemv = undefined
 
 coordSwapper :: Transpose -> (a,a)-> (a,a)
 coordSwapper NoTranspose (a,b) = (a,b)
@@ -136,3 +140,57 @@ zgemm :: PrimMonad m=>  Transpose ->Transpose ->  (Complex Double) -> (Complex D
         MutDenseMatrix (PrimState m) orient (Complex Double)  ->  
         MutDenseMatrix (PrimState m) orient (Complex Double) -> m ()
 zgemm = gemmAbstraction "zgemm" cblas_zgemm_unsafe cblas_zgemm_safe withRStorable_  
+
+
+type GemvFun el orient s m = Transpose -> el -> el  -> MutDenseMatrix s orient el
+  -> SM.MVector s el -> SM.MVector s el -> m ()
+
+
+{-# NOINLINE gemvAbstraction #-}
+gemvAbstraction:: (SM.Storable el, PrimMonad m) =>  String -> 
+    GemvFunFFI scale el -> GemvFunFFI scale el -> (el -> (scale -> m ())->m ()) -> forall orient . GemvFun el orient (PrimState m) m 
+gemvAbstraction gemvName gemvSafeFFI gemvUnsafeFFI constHandler = go 
+  where 
+    shouldCallFast :: Int -> Int -> Int -> Bool                         
+    shouldCallFast cy cx ax = flopsThreshold >= gemvComplexity cy cx ax
+
+    go  tra alpha beta
+        (MutableDenseMatrix ornta ax ay astride abuff) -- A
+        xbuff@(SM.MVector xx _) -- x
+        ybuff@(SM.MVector yx _) -- y
+            -- -- |  isBadGemv tra trb  ax ay bx by cx cy = error $! "bad dimension args to GEMV: ax ay bx by cx cy: " ++ show [ax, ay, bx, by, cx ,cy]
+            -- -- | SM.overlaps abuff cbuff || SM.overlaps bbuff cbuff = 
+            -- --         error $ "the read and write inputs for: " ++ gemvName ++ " overlap. This is a programmer error. Please fix." 
+            | otherwise  = 
+                {-  FIXME : Add Sharing check that also errors out for now-}
+                unsafeWithPrim abuff $ \ap -> 
+                unsafeWithPrim xbuff $ \xp ->  
+                unsafeWithPrim ybuff $ \yp  -> 
+                constHandler alpha  $  \alphaPtr ->   
+                constHandler beta $ \betaPtr ->  
+                    do  (ax,ay) <- return $ coordSwapper tra (ax,ay)
+                        --- dont need to swap b, info is in a and c
+                        --- c doesn't get implicitly transposed
+                        blasOrder <- return $ encodeNiceOrder ornta -- all three are the same orientation
+                        rawTra <- return $  encodeFFITranpose tra 
+                                 -- example of why i want to switch to singletones
+                        unsafePrimToPrim $!  (if shouldCallFast xx yx ax then gemvUnsafeFFI  else gemvSafeFFI ) 
+                            blasOrder rawTra (fromIntegral ax) (fromIntegral ay)
+                                alphaPtr ap  (fromIntegral astride) xp 1 betaPtr yp 1
+
+
+-- -- |  Matrix mult for general dense matrices
+-- type GemvFunFFI scale el = CBLAS_ORDERT ->   CBLAS_TRANSPOSET -> 
+--         CInt -> CInt -> {- alpha -} scale  -> {- Matrix A-} Ptr el  -> CInt -> {- x -}  Ptr el -> CInt-> 
+--             {- beta -} scale -> {- y -}  Ptr el -> CInt -> IO ()
+
+sgemv :: PrimMonad m=> 
+     Transpose -> Float -> Float  -> MutDenseMatrix (PrimState m) orient Float
+     -> SM.MVector (PrimState m) Float -> SM.MVector (PrimState m) Float -> m ()
+sgemv = gemvAbstraction "sgemv" cblas_sgemv_unsafe cblas_sgemv_safe (\x f -> f x )                                 
+                        
+
+dgemv :: PrimMonad m=> 
+     Transpose -> Double -> Double  -> MutDenseMatrix (PrimState m) orient Double
+     -> SM.MVector (PrimState m) Double -> SM.MVector (PrimState m) Double -> m ()
+dgemv = gemvAbstraction "dgemv" cblas_dgemv_unsafe cblas_dgemv_safe (\x f -> f x )    
